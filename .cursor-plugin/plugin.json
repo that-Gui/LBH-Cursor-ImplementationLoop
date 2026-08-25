@@ -1,0 +1,19 @@
+{
+  "name": "lbh-engineering-implementation-loop",
+  "description": "Orchestrated engineering implementation loop: parent-owned discovery and planning, implementation, verification, and parallel adversarial and architectural review with remediation until no actionable findings remain.",
+  "version": "1.0.0",
+  "author": {
+    "name": "London Borough of Hackney"
+  },
+  "repository": "https://github.com/that-Gui/LBH-Cursor-ImplementationLoop",
+  "keywords": [
+    "implementation-loop",
+    "orchestration",
+    "subagents",
+    "code-review",
+    "verification",
+    "engineering-workflow",
+    "quality",
+    "lbh"
+  ]
+}

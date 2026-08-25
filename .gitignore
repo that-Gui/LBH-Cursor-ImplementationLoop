@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Windows / Linux
+Thumbs.db
+Desktop.ini
+*~
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Editors & IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs & temp
+*.log
+tmp/
+.cache/
+
+# Node (in case tooling is added later)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
