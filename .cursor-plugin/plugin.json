@@ -1,6 +1,6 @@
 {
   "name": "lbh-engineering-implementation-loop",
-  "description": "Orchestrated engineering implementation loop: parent-owned discovery and planning, implementation, verification, and parallel adversarial and architectural review with remediation until no actionable findings remain.",
+  "description": "Orchestrated engineering implementation loop: a recorded baseline, a fresh implementation agent each round, and parallel adversarial and architectural review, repeating fix and re-review until both reviewers return PASS or the round cap is reached.",
   "version": "1.0.0",
   "author": {
     "name": "London Borough of Hackney"

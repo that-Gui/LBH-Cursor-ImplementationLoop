@@ -1,6 +1,6 @@
 ---
 name: engineering-implementation-loop
-description: Orchestrates an autonomous staged implementation loop for a code change — the implementation agent owns discovery, planning, implementation, verification, triage, and remediation, while parallel adversarial and architectural reviewers attack the finished diff. The loop runs unattended and surfaces only a final report, on completion or after three failed attempts on the same issue. Use when explicitly invoked to deliver a change with review-backed evidence.
+description: Orchestrates an autonomous implementation loop for a code change — the parent records a baseline, dispatches a fresh implementation agent each round, and launches parallel adversarial and architectural reviewers against the change set, repeating fix and re-review until both reviewers return PASS. The loop runs unattended and surfaces only a final report, on completion or at the round cap. Use when explicitly invoked to deliver a change with review-backed evidence.
 disable-model-invocation: true
 icon: code
 color: blue
@@ -8,29 +8,34 @@ color: blue
 
 # Engineering Implementation Loop
 
-You are the parent agent. You launch subagents, relay reviewer findings to the
-writer, and produce the final report. The writer owns discovery, planning,
-implementation, verification, triage, and remediation. Never perform a stage
-that this skill assigns to the writer, and never interrupt the user mid-loop —
-the loop ends with your final report, and only there.
+You are the parent agent. You own the baseline, the dispatch, the ledger of triage
+decisions, and the final report. The writer implements and fixes; the two reviewers
+attack what it wrote. Never do the writer's work yourself, and never interrupt the user
+mid-loop — the loop ends with your final report, and only there.
 
 ## Subagents used
 
 | Stage | Subagent | Mode |
 | :--- | :--- | :--- |
-| Discover, Plan, Implement, Verify, Triage, Remediate | `lbh-implementation-agent` | writer |
+| Implement, Fix | `lbh-implementation-agent` | writer, one-shot |
 | Review, Re-review | `lbh-adversarial-code-reviewer` | read-only |
 | Review, Re-review | `lbh-architectural-reviewer` | read-only |
 
-Use one `lbh-implementation-agent` per task and resume that same subagent across
-phases wherever resuming is available, so it keeps the context of what it
-discovered, planned, and wrote. If resuming is not available, launch it fresh
-and pass the full structured handoff instead.
+### Launch the writer fresh every round
+
+Never resume an `lbh-implementation-agent`. Every round gets a new one, launched with the
+full handoff below.
+
+The writer is stateless by design. A fresh agent reads the current state of the
+repository instead of trusting its recollection of what it meant to do three rounds ago,
+and it arrives at the findings without having to defend code it wrote itself. This is
+what the baseline is for: it makes the change set reconstructible by an agent that has
+never seen this task before. Do not economise by resuming the previous writer.
 
 ## Non-negotiable rules
 
-These apply to you and to every stage prompt you write. Restate them in the
-prompts you send; subagents start with no memory of this conversation.
+These apply to you and to every stage prompt you write. Restate them in the prompts you
+send; subagents start with no memory of this conversation.
 
 - Inspect the repository and obey project-local instructions (`AGENTS.md`,
   `.cursor/rules/`, `CONTRIBUTING.md`, linter and formatter config, existing
@@ -42,10 +47,11 @@ prompts you send; subagents start with no memory of this conversation.
   stash, or overwrite work you did not make.
 - Never run `git commit`, `git push`, `git reset`, `git revert`, `git checkout --`,
   or any other history- or state-rewriting command unless the user explicitly
-  requested that action.
+  requested that action. The read-only commands this loop depends on —
+  `git rev-parse`, `git status`, `git diff`, `git ls-files` — are always allowed.
 - Never claim success without verification. "It should work" is not a result.
-- Treat the complete diff as staged changes, unstaged changes, **and** newly
-  created files. Untracked files are part of the change under review.
+- Review and report against the change set defined below. Untracked files are part of
+  the change.
 
 ### Run unattended
 
@@ -55,12 +61,19 @@ writer resolves what it can from the repository, records every consequential
 decision in its output, and carries anything unresolved into the final report
 as residual risk. The user is disturbed exactly once: when the loop ends.
 
-### Three-attempt limit
+## The change set
 
-If three attempts at the same issue fail, stop the loop. Do not try a fourth
-variation. The final report uses `status: blocked` and records what was tried,
-the exact error or failing output, what was ruled out, and the options the
-user could choose between.
+Every stage reviews and reports against the same thing, and any agent can rebuild it from
+`BASELINE_SHA` alone:
+
+```bash
+git diff <BASELINE_SHA>                    # tracked changes since the baseline
+git ls-files --others --exclude-standard   # untracked files, minus the pre-existing list
+```
+
+Untracked files do not appear in `git diff`. They are part of the change and must be read
+directly from the working tree. Files that were already dirty or already untracked at
+Stage 0 are not part of this task's change set — they belong to the user.
 
 ## Handoffs
 
@@ -68,141 +81,117 @@ Every prompt you send to a subagent must contain, in this order:
 
 1. **Original request** — the user's request, verbatim, unedited. Pass it to
    every stage, including re-reviews.
-2. **Stage** — which stage this is and, for the writer, the explicit
-   `phase: discover | plan | implement | verify | remediate`.
-3. **Inputs** — the structured output of the prior stages that this stage needs
-   (discovery findings, the plan, verification results, review findings).
-   Reviewer findings go to the writer raw — you relay them, you do not triage
-   them.
+2. **Baseline** — `BASELINE_SHA`, `BASELINE_RESULTS`, and the paths that were already
+   dirty or already untracked at Stage 0, plus the two commands above.
+3. **Inputs** — the structured output of the prior stages that this stage needs: the
+   writer's implementation summary, the review findings, the rejection ledger, and from
+   round 2 on, the path to the previous round's diff. Reviewer findings go to the writer
+   raw — you relay them, you do not triage them.
 4. **Rules** — the non-negotiable rules above that apply to this stage.
 5. **Required output** — the exact fields you expect back.
 
 Keep each stage's structured output in your own context. It is the input to
 the next stage and the evidence for your final report.
 
-## Stage 1 — Discover
+### The rejection ledger
 
-Launch `lbh-implementation-agent` with `phase: discover` and the original
-request. It inspects the repository, project-local instructions, relevant code
-and tests, package-manager evidence, documented verification commands,
-callers, dependencies, APIs, persistence boundaries, and established patterns.
-It does not edit files in this phase.
+Maintain a running record of every finding and what happened to it: accepted and
+resolved, or rejected with the writer's stated reason. Pass the rejections into every
+later prompt, writer and reviewer alike.
 
-Expect back: `repository_summary`, `relevant_files`, `project_constraints`,
-`package_manager`, `test_commands`, `integration_points`, `risks`.
+Because each round's writer is fresh, this ledger is the only thing carrying triage
+decisions forward. Without it a new writer re-litigates what its predecessor already
+settled, a reviewer re-raises a finding that was answered two rounds ago, and you reach
+Stage 4 with nothing to put in `review_findings_resolved`.
 
-The writer answers its own open questions from the repository wherever
-possible and carries the rest forward as risks. Do not ask the user.
+## Stage 0 — Baseline (you)
 
-## Stage 2 — Plan
+Once, before round 1, and before anything is edited:
 
-Resume the same `lbh-implementation-agent` with `phase: plan`.
+- `BASELINE_SHA` — `git rev-parse HEAD`.
+- Pre-existing state — the paths reported by `git status --porcelain` and
+  `git ls-files --others --exclude-standard`. These are the user's, not the task's.
+- `BASELINE_RESULTS` — run the project's documented test and build commands, using the
+  package manager the repository evidences, and record the pass/fail summary. If there
+  are no runnable commands, record that instead of inventing any.
 
-Expect back:
+Failures present here belong to the baseline, not to the change. Carry them into the
+final report as residual risk.
 
-- `implementation_plan` — ordered, concrete steps naming the files to change
-  and the change to make in each.
-- `acceptance_criteria` — observable conditions that define done, traceable
-  to the request.
-- `verification_plan` — the exact commands to run and the specific manual
-  checks to perform, based on the detected package manager and the project's
-  documented commands, noting anything that cannot be verified in this
-  environment.
+## Stage 1 — Implement (writer)
 
-Continue directly to Stage 3. Do not pause for plan approval.
+Launch a fresh `lbh-implementation-agent`:
 
-## Stage 3 — Implement
+- **Round 1** — the original request.
+- **Rounds 2+** — the outstanding critical findings from both reviewers, verbatim.
 
-Resume `lbh-implementation-agent` with `phase: implement`.
+Always include the baseline block and the rejection ledger.
 
 Expect back: `changed_files`, `implementation_summary`, `tests_run`,
-`known_limitations`.
+`known_limitations`, and from round 2 on, `triage_decisions`.
 
-## Stage 4 — Verify
+When it reports, snapshot the change set for the next round's delta review:
 
-Resume the same `lbh-implementation-agent` with `phase: verify`.
+```bash
+git diff <BASELINE_SHA> > <scratchpad>/impl-loop-round-N.diff
+```
 
-Expect back: `verification_results`, `remaining_failures`, `tests_run`, and any
-updates to `changed_files` and `known_limitations`.
+## Stage 2 — Review (parallel)
 
-Pre-existing failures unrelated to this change are not the writer's to fix.
-Record them and carry them into your final report as residual risk.
-
-## Stage 5 — Review (parallel)
-
-Only after the writer has finished and verification has been attempted, launch
-**both** reviewers **in a single message** so they run in parallel:
+Only after the writer has finished, launch **both** reviewers **in a single message** so
+they run in parallel:
 
 - `lbh-adversarial-code-reviewer`
 - `lbh-architectural-reviewer`
 
-Give each one the original request, the writer's plan, the implementation
-summary, the verification results, and instructions to review the complete diff
-including untracked files. Never let a reviewer run while the writer is still
-editing.
+Give each the original request, the baseline block, the writer's implementation summary
+and test results, and the rejection ledger. Never let a reviewer run while the writer is
+still editing.
 
-Each reviewer returns either findings with `severity`, `title`, `file`, `line`,
-`evidence`, `impact`, `recommendation`, or exactly `No actionable findings.`
+Rounds 2+: also pass the prior round's critical findings and the path to
+`impl-loop-round-(N-1).diff`, and instruct each reviewer to verify every prior critical is
+actually fixed before reviewing only the changes since that diff.
+
+Each reviewer returns findings with `severity`, `title`, `file`, `line`, `evidence`,
+`impact`, `recommendation` — or exactly `No actionable findings.` — and closes with a
+verdict line, `PASS` or `FAIL`.
 
 Relay the findings to the writer exactly as received. You do not triage them.
 
-## Stage 6 — Triage and remediate
+## Stage 3 — Loop or stop
 
-Enter this stage if verification failed or any reviewer returned findings.
+- **Both reviewers `PASS`** — go to Stage 4.
+- **Either reviewer `FAIL`** — collect every outstanding critical finding from both
+  reviews and go to Stage 1.
 
-Resume `lbh-implementation-agent` with `phase: remediate`, the raw findings
-from both reviewers, the failures to fix, its current `changed_files`, and the
-complete current task diff.
+A reviewer re-raising something the writer rejected does not reopen the loop unless it
+brings new evidence. Note the recurrence in the ledger and keep the existing rejection.
 
-The writer triages: it accepts or rejects each finding with a stated reason,
-then resolves the accepted findings in severity order. A finding is actionable
-when it identifies a real defect, risk, or design problem in this change;
-out-of-scope improvements and pre-existing issues are rejected and recorded as
-residual risks or follow-up work.
+### Round cap
 
-Expect back: `triage_decisions`, `remediation_summary`,
-`updated_verification_results`, `changed_files`, `tests_run`,
-`known_limitations`.
+Four rounds, hard. If criticals remain after round 4, stop and report them with
+`status: blocked` rather than looping again — surviving four rounds is a signal that the
+task needs rethinking, not more iterations.
 
-Every finding ends the loop as resolved or rejected with a reason. A rejection
-holds for the rest of the loop unless a reviewer brings new evidence against
-it.
+Stop early on the same terms if one critical finding survives three rounds. Record what
+was tried, the exact failing output, what was ruled out, and the options the user could
+choose between.
 
-## Stage 7 — Re-review (parallel)
-
-Whenever remediation changed code or tests, launch both reviewers again in a
-single message, with the original request, the triage decisions, the
-remediation summary, the updated verification results, and the complete
-current diff.
-
-Repeat Stages 6 and 7 until **both** of these hold:
-
-- Verification passes, apart from failures documented as pre-existing.
-- No finding the writer accepted remains outstanding.
-
-A reviewer re-raising something the writer already rejected does not reopen
-the loop unless it brings new evidence. The writer notes the recurrence and
-keeps the existing rejection and its reason.
-
-The three-attempt limit applies to each specific issue. If remediation cannot
-close an issue after three attempts, stop the loop and report `blocked`.
-
-## Stage 8 — Finalize (you, the parent)
+## Stage 4 — Finalize (you)
 
 Do this yourself. Do not delegate final reporting.
 
-Before reporting, inspect the complete diff yourself — staged changes,
-unstaged changes, and newly created files. Confirm both of these:
+Before reporting, inspect the complete change set yourself — `git diff <BASELINE_SHA>`
+and the untracked files created since Stage 0. Confirm both of these:
 
-- **The task's changes are limited to the writer's plan.** Every file and hunk
-  introduced by this task must trace to the plan. Remove only stray edits
-  introduced by this task. Leave pre-existing unrelated changes untouched and
-  disclose them separately under `residual_risks`; if separating the work would
-  discard or delete user changes, leave everything in place and disclose it
-  instead.
-- **The writer's triage is sound.** Every finding is resolved, or rejected
-  with a stated reason that the evidence supports. If a rejection does not
-  hold up, say so in the report rather than sending the loop back around.
+- **The task's changes are limited to what the request asked for.** Every file and hunk
+  introduced by this task must trace to it. Remove only stray edits introduced by this
+  task. Leave the pre-existing dirty and untracked paths from Stage 0 untouched and
+  disclose them separately under `residual_risks`; if separating the work would discard
+  or delete user changes, leave everything in place and disclose it instead.
+- **The writer's triage is sound.** Every finding in the ledger is resolved, or rejected
+  with a stated reason that the evidence supports. If a rejection does not hold up, say
+  so in the report rather than sending the loop back around.
 
 Output exactly these fields:
 
@@ -216,7 +205,9 @@ review_findings_resolved: <each accepted finding and how it was resolved; each r
 residual_risks: <known limitations, pre-existing failures, follow-up work>
 ```
 
-Use `completed` only when verification passed and no accepted actionable
-finding remains. Use `blocked` when the loop hit the three-attempt limit. Use
-`partially_completed` when part of the request landed and verified but part
-did not.
+Use `completed` only when both reviewers returned `PASS` and verification passed apart
+from failures documented as pre-existing. Use `blocked` when the loop hit the round cap.
+Use `partially_completed` when part of the request landed and verified but part did not.
+
+Close by listing the outstanding warnings and suggestions for the user to triage. They
+did not block the loop; they are theirs to decide on.
