@@ -10,7 +10,7 @@
     "prepare-run": "tsx src/cli.ts prepare",
     "complete-run": "tsx src/cli.ts complete",
     "finalize": "tsx src/cli.ts finalize",
-    "test": "tsx --test test/**/*.test.ts",
+    "test": "tsx --test test/hooks.test.ts test/finalize.test.ts test/cursor-contract.test.ts",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test"
   },
