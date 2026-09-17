@@ -1,7 +1,7 @@
 {
   "name": "lbh-engineering-implementation-loop",
-  "description": "Orchestrated engineering implementation loop: a recorded baseline, a fresh implementation agent each round, and parallel adversarial and architectural review, repeating fix and re-review until both reviewers return PASS or the round cap is reached.",
-  "version": "1.0.0",
+  "description": "Orchestrated engineering implementation loop: a recorded baseline, a fresh implementation agent each round, parallel adversarial and architectural review, a fail-closed git-write hook, and an opt-in guarded helper that opens a pull request when the request asked for one.",
+  "version": "2.1.0",
   "author": {
     "name": "London Borough of Hackney"
   },
@@ -14,6 +14,8 @@
     "verification",
     "engineering-workflow",
     "quality",
+    "git-guardrail",
+    "pull-request",
     "lbh"
   ]
 }
